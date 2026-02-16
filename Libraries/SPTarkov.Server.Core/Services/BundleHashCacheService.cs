@@ -1,6 +1,6 @@
-﻿using SPTarkov.DI.Annotations;
+﻿using System.Collections.Concurrent;
+using SPTarkov.DI.Annotations;
 using SPTarkov.Server.Core.Models.Utils;
-using System.Collections.Concurrent;
 using SPTarkov.Server.Core.Utils;
 
 namespace SPTarkov.Server.Core.Services;
