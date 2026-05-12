@@ -29,29 +29,37 @@
   <ItemGroup>
     <InternalsVisibleTo Include="UnitTests" />
   </ItemGroup>
+  
+  <!-- 
+    Modified Target to skip Ceciler obfuscation on non-Windows systems.
+    Ceciler.Launcher.dll is typically Windows-only and will fail on Linux ARM.
+  -->
   <Target Name="AfterEverythingDone" AfterTargets="PostBuildEvent">
-    <!-- Run virtualizer patch -->
+    <!-- Run virtualizer patch (Only on Windows) -->
     <Exec
       ConsoleToMsBuild="true"
-      Condition="'$(IsPublish)' == 'true'"
+      Condition="'$(IsPublish)' == 'true' AND '$(OS)' == 'Windows_NT'"
       Command="dotnet build -c &quot;$(Configuration)&quot; &quot;$(MSBuildProjectDirectory)/../../Patches/Ceciler.Virtualizer/Ceciler.Virtualizer.csproj&quot;"
     />
     <Exec
       ConsoleToMsBuild="true"
+      Condition="'$(OS)' == 'Windows_NT'"
       Command="dotnet &quot;$(MSBuildProjectDirectory)/../../Ceciler/Ceciler.Launcher.dll&quot; &quot;$(OutDir)SPTarkov.Server.Core.dll&quot; &quot;$(MSBuildProjectDirectory)/../../Patches/Ceciler.Virtualizer/bin/$(Configuration)/$(TargetFramework)/Ceciler.Virtualizer.dll&quot;"
     />
-    <!-- Run ExtensionData patch -->
+    
+    <!-- Run ExtensionData patch (Only on Windows) -->
     <Exec
       ConsoleToMsBuild="true"
-      Condition="'$(IsPublish)' == 'true' and '$(Configuration)' == 'Release'"
+      Condition="'$(IsPublish)' == 'true' and '$(Configuration)' == 'Release' AND '$(OS)' == 'Windows_NT'"
       Command="dotnet build -c &quot;$(Configuration)&quot; &quot;$(MSBuildProjectDirectory)/../../Patches/Ceciler.JsonExtensionData/Ceciler.JsonExtensionData.csproj&quot;"
     />
     <Exec
-      Condition="'$(Configuration)' == 'Release'"
+      Condition="'$(Configuration)' == 'Release' AND '$(OS)' == 'Windows_NT'"
       ConsoleToMsBuild="true"
       Command="dotnet &quot;$(MSBuildProjectDirectory)/../../Ceciler/Ceciler.Launcher.dll&quot; &quot;$(OutDir)SPTarkov.Server.Core.dll&quot; &quot;$(MSBuildProjectDirectory)/../../Patches/Ceciler.JsonExtensionData/bin/$(Configuration)/$(TargetFramework)/Ceciler.JsonExtensionData.dll&quot;"
     />
   </Target>
+
   <!--  Generates the ProgramStatics class with the build information -->
   <Target Name="GenerateProgramStatics" BeforeTargets="CollectPackageReferences;CoreCompile">
     <WriteLinesToFile
