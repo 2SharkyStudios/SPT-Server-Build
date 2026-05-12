@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+      - develop
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    if: ${{ contains(github.event.head_commit.message, 'Release v') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from commit message
+        id: vars
+        shell: bash
+        run: |
+          msg='${{ github.event.head_commit.message }}'
+          # Expected format: "Release v4.0.14" -> version "4.0.14"
+          ver=$(printf "%s" "$msg" | sed -nE 's/.*Release v([0-9]+\.[0-9]+\.[0-9]+).*/\1/p')
+          if [ -z "$ver" ]; then
+            echo "No version found in commit message: $msg"
+            exit 1
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "tag=v$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Publish (matrix)
+        uses: actions/github-script@v7
+        id: noop
+        with:
+          script: |
+            core.info('This step is intentionally a placeholder; build matrix is executed below using run steps per RID.')
+
+      - name: Build artifacts (win-x64)
+        if: ${{ always() }}
+        shell: bash
+        env:
+          RID: win-x64
+        run: |
+          ver='${{ steps.vars.outputs.version }}'
+          tag='${{ steps.vars.outputs.tag }}'
+          dotnet publish ./SPTarkov.Server/SPTarkov.Server.csproj -c Release -r "$RID" --self-contained false \
+            -p:SptVersion="$ver" -p:SptCommit="${{ github.sha }}" -p:SptBuildTime="$(date +%s)" -p:SptBuildType="RELEASE" \
+            /p:DebugType=None
+
+      - name: Build artifacts (linux-x64)
+        if: ${{ always() }}
+        shell: bash
+        env:
+          RID: linux-x64
+        run: |
+          ver='${{ steps.vars.outputs.version }}'
+          dotnet publish ./SPTarkov.Server/SPTarkov.Server.csproj -c Release -r "$RID" --self-contained false \
+            -p:SptVersion="$ver" -p:SptCommit="${{ github.sha }}" -p:SptBuildTime="$(date +%s)" -p:SptBuildType="RELEASE" \
+            /p:DebugType=None
+
+      - name: Build artifacts (osx-arm64)
+        if: ${{ always() }}
+        shell: bash
+        env:
+          RID: osx-arm64
+        run: |
+          ver='${{ steps.vars.outputs.version }}'
+          dotnet publish ./SPTarkov.Server/SPTarkov.Server.csproj -c Release -r "$RID" --self-contained false \
+            -p:SptVersion="$ver" -p:SptCommit="${{ github.sha }}" -p:SptBuildTime="$(date +%s)" -p:SptBuildType="RELEASE" \
+            /p:DebugType=None
+
+      - name: Package + upload artifacts
+        shell: bash
+        run: |
+          mkdir -p out
+          for rid in win-x64 linux-x64 osx-arm64; do
+            # dotnet publish default output: bin/Release/<tfm>/<rid>/publish
+            pubdir="./SPTarkov.Server/bin/Release/net9.0/$rid/publish"
+            if [ ! -d "$pubdir" ]; then
+              echo "Missing publish dir: $pubdir"
+              exit 1
+            fi
+            zipname="out/SPT-${rid}-${{ steps.vars.outputs.version }}.zip"
+            (cd "$pubdir" && zip -r "$(pwd -W)/$zipname" .)
+          done
+
+          for f in out/*.zip; do
+            echo "Uploading $f"
+            gh api --method POST "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ steps.create_release.outputs.upload_id }}" --input "$f"
+          done
+
+      - name: Create GitHub Release
+        id: create_release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.vars.outputs.tag }}
+          VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          # Create or update release
+          # We'll create a new release and then upload assets using actions/upload-release-asset.
+          payload=$(jq -n --arg tag "$TAG" --arg name "Release $VERSION" '{tag_name:$tag,name:$name,body:"Automated build",draft:false,prerelease:false}')
+          res=$(curl -sS -X POST -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/releases" -d "$payload")
+          echo "upload_id=$(echo "$res" | jq -r '.id')" >> "$GITHUB_OUTPUT"
+
