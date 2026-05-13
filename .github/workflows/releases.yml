@@ -3,8 +3,8 @@ name: Release
 on:
   push:
     branches:
-      - main
       - master
+      - develop
   workflow_dispatch: {}
 
 permissions:
@@ -37,27 +37,17 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
-      - name: Publish (matrix)
-        uses: actions/github-script@v7
-        id: noop
-        with:
-          script: |
-            core.info('This step is intentionally a placeholder; build matrix is executed below using run steps per RID.')
-
       - name: Build artifacts (win-x64)
-        if: ${{ always() }}
         shell: bash
         env:
           RID: win-x64
         run: |
           ver='${{ steps.vars.outputs.version }}'
-          tag='${{ steps.vars.outputs.tag }}'
           dotnet publish ./SPTarkov.Server/SPTarkov.Server.csproj -c Release -r "$RID" --self-contained false \
             -p:SptVersion="$ver" -p:SptCommit="${{ github.sha }}" -p:SptBuildTime="$(date +%s)" -p:SptBuildType="RELEASE" \
             /p:DebugType=None
 
       - name: Build artifacts (linux-x64)
-        if: ${{ always() }}
         shell: bash
         env:
           RID: linux-x64
@@ -68,7 +58,6 @@ jobs:
             /p:DebugType=None
 
       - name: Build artifacts (osx-arm64)
-        if: ${{ always() }}
         shell: bash
         env:
           RID: osx-arm64
@@ -78,26 +67,7 @@ jobs:
             -p:SptVersion="$ver" -p:SptCommit="${{ github.sha }}" -p:SptBuildTime="$(date +%s)" -p:SptBuildType="RELEASE" \
             /p:DebugType=None
 
-      - name: Package + upload artifacts
-        shell: bash
-        run: |
-          mkdir -p out
-          for rid in win-x64 linux-x64 osx-arm64; do
-            # dotnet publish default output: bin/Release/<tfm>/<rid>/publish
-            pubdir="./SPTarkov.Server/bin/Release/net9.0/$rid/publish"
-            if [ ! -d "$pubdir" ]; then
-              echo "Missing publish dir: $pubdir"
-              exit 1
-            fi
-            zipname="out/SPT-${rid}-${{ steps.vars.outputs.version }}.zip"
-            (cd "$pubdir" && zip -r "$(pwd -W)/$zipname" .)
-          done
-
-          for f in out/*.zip; do
-            echo "Uploading $f"
-            gh api --method POST "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ steps.create_release.outputs.upload_id }}" --input "$f"
-          done
-
+      # STEP 1: Create the GitHub Release FIRST so we have an upload_id
       - name: Create GitHub Release
         id: create_release
         shell: bash
@@ -106,9 +76,58 @@ jobs:
           TAG: ${{ steps.vars.outputs.tag }}
           VERSION: ${{ steps.vars.outputs.version }}
         run: |
-          # Create or update release
-          # We'll create a new release and then upload assets using actions/upload-release-asset.
           payload=$(jq -n --arg tag "$TAG" --arg name "Release $VERSION" '{tag_name:$tag,name:$name,body:"Automated build",draft:false,prerelease:false}')
           res=$(curl -sS -X POST -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/releases" -d "$payload")
-          echo "upload_id=$(echo "$res" | jq -r '.id')" >> "$GITHUB_OUTPUT"
+          
+          upload_id=$(echo "$res" | jq -r '.id')
+          if [ "$upload_id" == "null" ] || [ -z "$upload_id" ]; then
+            echo "Failed to create release. Response: $res"
+            exit 1
+          fi
+          
+          echo "upload_id=$upload_id" >> "$GITHUB_OUTPUT"
+          echo "Release created with ID: $upload_id"
 
+      # STEP 2: Package and Upload Assets SECOND
+      - name: Package + upload artifacts
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPLOAD_ID: ${{ steps.create_release.outputs.upload_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p out
+          for rid in win-x64 linux-x64 osx-arm64; do
+            pubdir="./SPTarkov.Server/bin/Release/net9.0/$rid/publish"
+            
+            if [ ! -d "$pubdir" ]; then
+              echo "Missing publish dir: $pubdir"
+              exit 1
+            fi
+            
+            zipname="SPT-${rid}-${{ steps.vars.outputs.version }}.zip"
+            fullpath="out/${zipname}"
+            
+            (cd "$pubdir" && zip -r "../../${fullpath}" .)
+            
+            if [ $? -ne 0 ]; then
+              echo "Failed to create zip for $rid"
+              exit 1
+            fi
+            
+            echo "Uploading ${fullpath}..."
+            
+            curl -sS -X POST \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/zip" \
+              "https://uploads.github.com/repos/${REPO}/releases/${UPLOAD_ID}/assets?name=${zipname}" \
+              --data-binary "@${fullpath}"
+            
+            if [ $? -ne 0 ]; then
+              echo "Failed to upload asset for $rid"
+              exit 1
+            fi
+          done
+          
+          echo "All artifacts uploaded successfully."
