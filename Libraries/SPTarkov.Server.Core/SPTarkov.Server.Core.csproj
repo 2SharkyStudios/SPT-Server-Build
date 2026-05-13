@@ -29,7 +29,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="UnitTests" />
   </ItemGroup>
-  
+
   <!-- 
     Modified Target to skip Ceciler obfuscation on non-Windows systems.
     Ceciler.Launcher.dll is typically Windows-only and will fail on Linux ARM.
@@ -46,7 +46,7 @@
       Condition="'$(OS)' == 'Windows_NT'"
       Command="dotnet &quot;$(MSBuildProjectDirectory)/../../Ceciler/Ceciler.Launcher.dll&quot; &quot;$(OutDir)SPTarkov.Server.Core.dll&quot; &quot;$(MSBuildProjectDirectory)/../../Patches/Ceciler.Virtualizer/bin/$(Configuration)/$(TargetFramework)/Ceciler.Virtualizer.dll&quot;"
     />
-    
+
     <!-- Run ExtensionData patch (Only on Windows) -->
     <Exec
       ConsoleToMsBuild="true"
